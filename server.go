@@ -53,13 +53,18 @@ type RequestProcessor interface {
 }
 
 // NewServer inits the nats with given configuration and tries to connect
-func NewServer(cfg map[string]interface{}) (*Server, error) {
+func NewServer(cfg map[string]interface{}, params ...any) (*Server, error) {
 	srv := &Server{
 		state:      sNew,
 		processors: map[string]processorRecord{},
 		config:     cfg,
 	}
 
+	for _, param := range params {
+		if l, ok := param.(*zap.Logger); ok {
+			srv.log = l
+		}
+	}
 	err := srv.connect()
 	return srv, err
 }
@@ -69,9 +74,12 @@ func (ns *Server) connect() error {
 	o.AllowReconnect = true
 	o.MaxReconnect = 60
 	o.ReconnectWait = time.Second
-	o.Url, _ = ns.config["url"].(string)
-	if o.Url == "" {
-		o.Url = natsgo.DefaultURL
+	o.Url = natsgo.DefaultURL
+
+	if ns.config != nil {
+		if url, ok := ns.config["url"].(string); ok && url != "" {
+			o.Url = url
+		}
 	}
 
 	var err error
@@ -263,4 +271,8 @@ func (ns *Server) RequestSync(
 		resp = respMsg.Data
 	}
 	return
+}
+
+func (ns *Server) SetLogger(logger *zap.Logger) {
+	ns.log = logger
 }
