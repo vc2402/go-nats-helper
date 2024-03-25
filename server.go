@@ -4,6 +4,7 @@ import (
 	"errors"
 	natsgo "github.com/nats-io/nats.go"
 	"go.uber.org/zap"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,11 @@ const (
 	sNew
 	sClosed
 	sStopped
+)
+
+const (
+	ConfigURL    = "url"
+	ConfigPrefix = "prefix"
 )
 
 var (
@@ -37,6 +43,7 @@ type Server struct {
 	state      natsState
 	log        *zap.Logger
 	stopCh     chan struct{}
+	prefix     string
 	processors map[string]processorRecord
 	config     map[string]interface{}
 }
@@ -65,6 +72,10 @@ func NewServer(cfg map[string]interface{}, params ...any) (*Server, error) {
 			srv.log = l
 		}
 	}
+
+	if p, ok := cfg[ConfigPrefix].(string); ok {
+		srv.prefix = p
+	}
 	err := srv.connect()
 	return srv, err
 }
@@ -77,7 +88,7 @@ func (ns *Server) connect() error {
 	o.Url = natsgo.DefaultURL
 
 	if ns.config != nil {
-		if url, ok := ns.config["url"].(string); ok && url != "" {
+		if url, ok := ns.config[ConfigURL].(string); ok && url != "" {
 			o.Url = url
 		}
 	}
@@ -133,14 +144,15 @@ func (ns *Server) Stop() {
 }
 
 // AddProcessor adds the incoming messages processor
-func (ns *Server) AddProcessor(name string, subject string, processor Processor, replace bool) error {
+func (ns *Server) AddProcessor(name string, kind Kind, subject string, processor Processor, replace bool) error {
 	_, ok := ns.processors[name]
+
 	if ok && !replace {
 		return ErrDuplicateProcessor
 	}
 	pr := processorRecord{
 		Processor: processor,
-		subject:   subject,
+		subject:   ns.getSubject(kind, subject),
 		name:      name,
 	}
 	var err error
@@ -159,7 +171,7 @@ func (ns *Server) AddRequestProcessor(name string, subject string, processor Req
 	}
 	pr := processorRecord{
 		RequestProcessor: processor,
-		subject:          subject,
+		subject:          ns.getSubject(KindRequest, subject),
 		name:             name,
 	}
 	var err error
@@ -187,6 +199,20 @@ func (ns *Server) subscribeProcessor(pr *processorRecord) error {
 		},
 	)
 	return err
+}
+
+func (ns *Server) getSubject(kind Kind, subject string) string {
+	var subj strings.Builder
+	if ns.prefix != "" && kind != KindAbsolut {
+		subj.WriteString(ns.prefix)
+	}
+
+	if kind != KindUnknown {
+		subj.WriteString(string(kind))
+		subj.WriteRune('.')
+	}
+	subj.WriteString(subject)
+	return subj.String()
 }
 
 func (ns *Server) processMessage(msg *natsgo.Msg, pr *processorRecord) {
@@ -234,9 +260,7 @@ func (ns *Server) processMessage(msg *natsgo.Msg, pr *processorRecord) {
 
 // Publish allows to publish a message on given topic
 func (ns *Server) Publish(subject string, kind Kind, message []byte, options ...Option) error {
-	if kind != KindUnknown {
-		subject = string(kind) + "." + subject
-	}
+	subject = ns.getSubject(kind, subject)
 
 	if ns.state != sClosed && ns.state != sStopped {
 		var err error
@@ -265,7 +289,7 @@ func (ns *Server) RequestSync(
 	timeout time.Duration,
 	options ...Option,
 ) (resp []byte, err error) {
-	subject = string(KindRequest) + "." + subject
+	subject = ns.getSubject(KindRequest, subject)
 	respMsg, err := ns.client.Request(subject, message, timeout)
 	if respMsg != nil {
 		resp = respMsg.Data

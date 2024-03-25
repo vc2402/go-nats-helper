@@ -15,8 +15,10 @@ const (
 	KindSystem Kind = "sys"
 	// KindEvent - some event in the system
 	KindEvent Kind = "evn"
-	// KindUnknown
+	// KindUnknown may be used in case if kind is not in the list
 	KindUnknown Kind = "unknown"
+	// KindAbsolut should be used if prefix should not be added
+	KindAbsolut Kind = "abs"
 )
 
 type Option int
